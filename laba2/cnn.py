@@ -5,20 +5,33 @@ rng = np.random.default_rng(51)
 def relu(x):
     return np.maximum(0, x)
 
-def col2im_back(dim_col,h_prime,w_prime,stride,hh,ww,c):
-    H = (h_prime - 1) * stride + hh
-    W = (w_prime - 1) * stride + ww
-    dx = np.zeros([c,H,W])
-    for i in range(h_prime*w_prime):
-        row = dim_col[i,:]
-        h_start = (i / w_prime) * stride
+def col2im_back(dim_col, h_prime, w_prime, stride, hh, ww, C):
+    """
+    Обратное преобразование из колоночного представления в изображение.
+
+    Parameters:
+    - dim_col: Массив формы (batch * F, H' * W', C * hh * ww)
+    - h_prime, w_prime: Размеры выходной карты после пуллинга
+    - stride: Шаг пуллинга
+    - hh, ww: Высота и ширина окна пуллинга
+    - C: Количество каналов
+
+    Returns:
+    - dx: Градиент относительно входного изображения, форма (batch * F, C, H, W)
+    """
+    batchF = dim_col.shape[0]
+    dx = np.zeros((batchF, C, (h_prime - 1) * stride + hh, (w_prime - 1) * stride + ww))
+    
+    for i in range(h_prime * w_prime):
+        row = dim_col[:, i, :]  # (batchF, C * hh * ww)
+        h_start = (i // w_prime) * stride
         w_start = (i % w_prime) * stride
-        dx[:,h_start:h_start+hh,w_start:w_start+ww] += np.reshape(row,(c,hh,ww))
+        dx[:, :, h_start:h_start + hh, w_start:w_start + ww] += row.reshape(batchF, C, hh, ww)
+    
     return dx
 
 def im2col(x,hh,ww,stride):
     batch, C, h,w = x.shape
-
     new_h = (h-hh) // stride + 1
     new_w = (w-ww) // stride + 1
     col = np.zeros((batch, new_h*new_w,hh*ww*C))
@@ -31,8 +44,7 @@ def im2col(x,hh,ww,stride):
 def col2im(mul,h_prime,w_prime):
     batch = mul.shape[0]
     F = mul.shape[-1]
-    out = np.zeros([batch,F,h_prime,w_prime])
-    out[:,:,:,:] = np.reshape(mul,(batch, F,h_prime,w_prime))
+    out = mul.reshape((batch, F, h_prime, w_prime))
     return out
 
 class Conv:
@@ -44,7 +56,6 @@ class Conv:
         self.im2col = im2col
         self.col2im = col2im
         
-
     def _init_filter_bias(self, amount_filters ):
         return np.zeros((1,amount_filters)) 
 
@@ -69,13 +80,51 @@ class Conv:
         W_prime = (W+2*self.pad_num-WW) // self.stride + 1
         out = None
         im_pad = np.pad(x,((0,0),(0,0),(self.pad_num,self.pad_num),(self.pad_num,self.pad_num)),'constant')
+        print(im_pad.shape)
         im_col = im2col(im_pad,HH,WW,self.stride)
         filter_col = np.reshape(self.w,(F,-1))
-        print(filter_col.shape)
         conv_it = np.dot(im_col, filter_col.T) + self.bias
         out = col2im(conv_it,H_prime,W_prime)
+        self.mask = (x, filter_col, conv_param )
         return out
+    def conv_backward(self, dout):
+        x, im_pad, im_col, filter_col, conv_param, out = self.mask
+        stride = self.stride
+        pad = self.pad_num
+        F, C, HH, WW = self.w.shape
+        N, F_out, H_prime, W_prime = dout.shape
+
+        dBias = np.sum(dout, axis=(0, 2, 3), keepdims=True) 
+
+        
+        dout_reshaped = dout.transpose(0,2,3,1).reshape(-1, F) 
     
+        dW = dout_reshaped.T.dot(im_col.reshape(-1, F)).reshape(F, C, HH, WW) 
+
+    
+        dIm_col = dout_reshaped.dot(filter_col) 
+        dIm_col = dIm_col.reshape(N, H_prime * W_prime, C * HH * WW) 
+        
+       
+        dIm_pad = np.zeros_like(im_pad)
+        for n in range(N):
+            dIm_pad[n] += col2im_back(dIm_col[n].T, H_prime, W_prime, stride, HH, WW, C) 
+
+
+        if pad > 0:
+            dX = dIm_pad[:, :, pad:-pad, pad:-pad]
+        else:
+            dX = dIm_pad
+
+    
+        self.dW = dW
+        self.dBias = dBias
+
+        return dX
+
+    def update_params(self, lr=0.01):
+        self.w -= lr * self.dW
+        self.bias -= lr * self.dBias
 
     
 class Pooling:
@@ -83,41 +132,36 @@ class Pooling:
         self.height = height
         self.width = width
         self.stride = stride
-        
     def max_pooling(self,x):
         self.type = 'max'
         batch, F,  H, W = x.shape
-        out_h = (H - self.height) // self.stride + 1
-        out_w = (W - self.width) // self.stride + 1
-        self.mask  = col = np.zeros((batch, F, out_h , out_w))
-        for y in range(out_h):
-            for x_pos in range(out_w):
-                patch = x[:,:, y*self.stride:y*self.stride+self.height, x_pos*self.stride:x_pos*self.stride+self.width]
-                max_patch = patch.max(axis=(2,3))
-                col[:, :, y, x_pos] = max_patch
-                max_patch[max_patch != 0] = 1
-                print(max_patch)
-                self.mask[:, :, y, x_pos] = max_patch
-        return col
+        H_prime = (H - self.height) // self.stride + 1
+        W_prime = (W - self.width) // self.stride + 1
+        x_reshaped = x.reshape(batch * F, 1, H, W)
+        im_col = im2col(x_reshaped, self.height, self.width, self.stride)  
+        out = np.max(im_col, axis=2) 
+        out = out.reshape(batch, F, H_prime, W_prime)
+        self.x = x
+        return out
+    
+    def pool_backward(self, dout):
+        batch, F, H, W = self.x.shape  
+        pool_h = self.height
+        pool_w = self.width
+        stride = self.stride
+        dx = np.zeros(self.x.shape)
+
+       
+        return None
+
     def average_pooling(self,x):
         self.type = 'average'
         batch, F,  H, W = x.shape
         out_h = (H - self.height) // self.stride + 1
         out_w = (W - self.width) // self.stride + 1
-        col = np.zeros((batch, F,  out_h , out_w))
+        out = np.zeros((batch, F, out_h, out_w))
         for y in range(out_h):
             for x_pos in range(out_w):
                 patch = x[:,:, y*self.stride:y*self.stride+self.height, x_pos*self.stride:x_pos*self.stride+self.width].mean(axis=(2,3))
-                col[:, :, y, x_pos] = patch
-        return col
-    
-
-
-
-
-
-
-
-
-            
-    
+                out[:, :, y, x_pos] = patch
+        return out

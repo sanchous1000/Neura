@@ -69,6 +69,7 @@ class MLP:
             self.dW[i] = np.dot(self.delta.T, self.a[i]) / m
             self.db[i] = np.sum(self.delta, axis=0, keepdims=True).T / m
             if i != 0:
+                print(self.delta.shape, self.W[i].shape)
                 self.delta = np.dot(self.delta, self.W[i]) * sigmoid_derivative(self.z[i])
     #
     def _compute_loss(self, X, y):
