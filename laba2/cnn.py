@@ -80,7 +80,6 @@ class Conv:
         W_prime = (W+2*self.pad_num-WW) // self.stride + 1
         out = None
         im_pad = np.pad(x,((0,0),(0,0),(self.pad_num,self.pad_num),(self.pad_num,self.pad_num)),'constant')
-        print(im_pad.shape)
         im_col = im2col(im_pad,HH,WW,self.stride)
         filter_col = np.reshape(self.w,(F,-1))
         conv_it = np.dot(im_col, filter_col.T) + self.bias
@@ -93,24 +92,14 @@ class Conv:
         pad = self.pad_num
         F, C, HH, WW = self.w.shape
         N, F_out, H_prime, W_prime = dout.shape
-
         dBias = np.sum(dout, axis=(0, 2, 3), keepdims=True) 
-
-        
         dout_reshaped = dout.transpose(0,2,3,1).reshape(-1, F) 
-    
-        dW = dout_reshaped.T.dot(im_col.reshape(-1, F)).reshape(F, C, HH, WW) 
-
-    
+        dW = dout_reshaped.T.dot(im_col.reshape(-1, F)).reshape(F, C, HH, WW)
         dIm_col = dout_reshaped.dot(filter_col) 
         dIm_col = dIm_col.reshape(N, H_prime * W_prime, C * HH * WW) 
-        
-       
         dIm_pad = np.zeros_like(im_pad)
         for n in range(N):
             dIm_pad[n] += col2im_back(dIm_col[n].T, H_prime, W_prime, stride, HH, WW, C) 
-
-
         if pad > 0:
             dX = dIm_pad[:, :, pad:-pad, pad:-pad]
         else:
@@ -134,25 +123,47 @@ class Pooling:
         self.stride = stride
     def max_pooling(self,x):
         self.type = 'max'
-        batch, F,  H, W = x.shape
-        H_prime = (H - self.height) // self.stride + 1
-        W_prime = (W - self.width) // self.stride + 1
-        x_reshaped = x.reshape(batch * F, 1, H, W)
-        im_col = im2col(x_reshaped, self.height, self.width, self.stride)  
-        out = np.max(im_col, axis=2) 
-        out = out.reshape(batch, F, H_prime, W_prime)
         self.x = x
+        batch, F,  H, W = x.shape
+        out_h = (H - self.height) // self.stride + 1
+        out_w = (W - self.width) // self.stride + 1
+        out = np.zeros((batch, F, out_h, out_w))
+        self.mask = np.zeros(x.shape)
+        for y in range(out_h):
+            for x_i in range(out_w):
+                window = x[:, :, 
+                           y * self.stride : y * self.stride + self.height, 
+                           x_i * self.stride : x_i * self.stride + self.width]
+                patch = window.max(axis=(2,3))
+                out[:, :, y, x_i] = patch
+                mask = (window == patch[:, :, None, None])
+                self.mask[:, :, y * self.stride : y * self.stride + self.height, x_i * self.stride : x_i * self.stride + self.width] += mask
         return out
     
     def pool_backward(self, dout):
+        """
+        Обратный проход через слой Max Pooling.
+        
+        :param dout: Градиент из следующего слоя с размерностью, идентичной выходу из forward pass
+        :return: Градиент по входу x с размерностью (batch, F, H, W)
+        """
         batch, F, H, W = self.x.shape  
         pool_h = self.height
         pool_w = self.width
         stride = self.stride
-        dx = np.zeros(self.x.shape)
-
-       
-        return None
+        out_h = (H - pool_h) // stride + 1
+        out_w = (W - pool_w) // stride + 1
+        dX = np.zeros_like(self.x)
+        for y in range(out_h):
+            for x_i in range(out_w):
+                
+                window_mask = self.mask[:, :, 
+                                         y * stride : y * stride + pool_h, 
+                                         x_i * stride : x_i * stride + pool_w]
+                dout_expanded = dout[:, :, y, x_i][:, :, None, None]
+                dX[:, :, y * stride : y * stride + pool_h, 
+                   x_i * stride : x_i * stride + pool_w] += window_mask * dout_expanded
+        return dX
 
     def average_pooling(self,x):
         self.type = 'average'
