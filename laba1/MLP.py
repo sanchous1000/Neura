@@ -94,7 +94,6 @@ class MLP:
             compute_loss = self._compute_loss(X, y)
             epoch_losses.append(compute_loss)
             pbar.set_description(f"Epoch {epoch+1}/{epochs}, Сompute_loss: {compute_loss}")
-
         return epoch_losses
     
     #

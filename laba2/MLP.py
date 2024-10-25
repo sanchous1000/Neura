@@ -12,13 +12,14 @@ def sigmoid_derivative(x):
     return sig * (1 - sig)
 #
 def softmax(x):
+    x = np.clip(x, 1e-15, 1 - 1e-15)
     e= np.exp(x - np.max(x, axis=1, keepdims=True))
-    return e / e.sum(axis=1, keepdims=True)
+    return e / np.sum(e, axis=1, keepdims=True)
 
 
 def categorical_cross_entropy(y_pred, y_true):
     y_pred = np.clip(y_pred, 1e-15, 1 - 1e-15)
-    return -np.mean(np.sum(y_true * np.log(y_pred), axis=1))
+    return -np.sum(y_true * np.log(y_pred))
 
 
 class MLP:
@@ -39,7 +40,12 @@ class MLP:
         #
         self.dW = [np.zeros_like(w) for w in self.W]
         self.db = [np.zeros_like(b) for b in self.b]
-    #
+        #
+        self.t = 1
+        self.mW = [np.zeros_like(w) for w in self.W]
+        self.mb = [np.zeros_like(b) for b in self.b]
+        self.vW = [np.zeros_like(w) for w in self.W]
+        self.vb = [np.zeros_like(w) for w in self.b]
     
     def _init_weights(self, arch):
         net_in = arch[0]
@@ -53,6 +59,9 @@ class MLP:
         return [np.zeros((arch[i+1], 1)) for i in range(self.depth)]
     #
     def _feedforward(self, X):
+        """
+        
+        retrun: softmax itog"""
         self.a[0] = X
         
         for i in range(self.depth):
@@ -61,6 +70,7 @@ class MLP:
                 self.a[i+1] = self.hidden_activation_fn(self.z[i+1])
             else:
                 self.a[i+1] = self.output_activation_fn(self.z[i+1])
+                return self.a[i+1] 
     #
     def _backprop(self, y):
         m = y.shape[0]  
@@ -69,17 +79,33 @@ class MLP:
             self.dW[i] = np.dot(self.delta.T, self.a[i]) / m
             self.db[i] = np.sum(self.delta, axis=0, keepdims=True).T / m
             if i != 0:
-                print(self.delta.shape, self.W[i].shape)
                 self.delta = np.dot(self.delta, self.W[i]) * sigmoid_derivative(self.z[i])
     #
-    def _compute_loss(self, X, y):
-        y_pred = self.predict(X)
-        return self.loss_fn(y_pred, y)
+    def _compute_loss(self, y_pred, y_true):
+        return self.loss_fn(y_pred, y_true)
     #
     def _update_params(self, lr):
         for i in range(self.depth):
             self.W[i] -= lr * self.dW[i]
             self.b[i] -= lr * self.db[i]
+    def _update_params_Adam(self, lr=1e-3, beta_1=0.9, beta_2=0.999, eps=1e-7):
+        for i in range(self.depth):
+        # update first moments
+            self.mW[i] = beta_1*self.mW[i] + (1-beta_1)*self.dW[i]
+            self.mb[i] = beta_1*self.mb[i] + (1-beta_1)*self.db[i]
+            # update second moments
+            self.vW[i] = beta_2*self.vW[i] + (1-beta_2)*(self.dW[i]**2)
+            self.vb[i] = beta_2*self.vb[i] + (1-beta_2)*(self.db[i]**2)
+            # correction
+            mW_corr = self.mW[i] / (1-beta_1**self.t)
+            mb_corr = self.mb[i] / (1-beta_1**self.t)
+            vW_corr = self.vW[i] / (1-beta_2**self.t)
+            vb_corr = self.vb[i] / (1-beta_2**self.t)
+            # update params
+            self.W[i] -= lr*mW_corr / (np.sqrt(vW_corr)+eps)
+            self.b[i] -= lr*mb_corr / (np.sqrt(vb_corr)+eps)
+            # update time
+        self.t += 1
     #
     def train(self, X, y, epochs=1, batch_size=8, lr=1e-2):
         X = np.array(X) 
