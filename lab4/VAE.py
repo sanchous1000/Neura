@@ -6,44 +6,21 @@ import numpy as np
 
 import numpy as np
 
-def binary_cross_entropy(input, target, weight=None, reduction='sum'):
-    # Предотвращение логарифма нуля
-    epsilon = 1e-12
-    input = np.clip(input, epsilon, 1 - epsilon)
-    
-    # Формула для binary cross-entropy
-    loss = - (target * np.log(input) + (1 - target) * np.log(1 - input))
-    
-    # Применение весов, если указано
-    if weight is not None:
-        loss *= weight
-    
-    # Применение редукции
-    if reduction == 'mean':
-        return np.mean(loss)
-    elif reduction == 'sum':
-        return np.sum(loss)
-    elif reduction == 'none':
-        return loss
-    else:
-        raise ValueError(f"Неверный тип редукции: {reduction}")
-
-
 
 
 class Encoder:
-    def __init__(self, arch = (784, 200, 50), zdims=2):
+    def __init__(self, arch = (784, 256, 128), zdims=50, learning_rate  = 1e-8):
         self.zdims = zdims
-        self.flatten = Flatten()
         self.fc1 = Fullyconnected(input_size=arch[0], output_size=arch[1])
         self.LeakyRelu1 =  LeakyRelu()
         self.fc2 = Fullyconnected(input_size=arch[1], output_size=arch[2])
         self.LeakyRelu2 =  LeakyRelu()
         self.mu = Fullyconnected(input_size=arch[2], output_size=zdims)
         self.log_var = Fullyconnected(input_size=arch[2], output_size=zdims)
+        self.lr = learning_rate
 
 
-        self.layers = [self.flatten, 
+        self.layers = [
                        self.fc1,
                      self.LeakyRelu1,
                      self.fc2,
@@ -52,14 +29,6 @@ class Encoder:
                       self.log_var]]
 
         
-        
-
-        '''self.en_x_1 = Fullyconnected(input_size=input_dim, output_size=hidden_dim)
-        self.LeakyRelu1 = LeakyRelu()
-        self.en_x_2 = Fullyconnected(input_size=hidden_dim, output_size=hidden_dim)
-        self.LeakyRelu2 = LeakyRelu()
-        self.en_x_4_mu = Fullyconnected(input_size=hidden_dim, output_size=zdims)
-        self.en_x_4_sigma = Fullyconnected(input_size=hidden_dim, output_size=zdims)'''
 
     def forward(self, x):
         # Прямой проход
@@ -74,10 +43,7 @@ class Encoder:
 
     def backward(self, dmu, dlogvar):
         # Градиенты для mu и logvar
-        '''dh = self.en_x_4_mu.backward(dmu) + self.en_x_4_sigma.backward(dlogvar)
-         # Прямой проход
-        h = x'''
-        
+   
         for layer in reversed(self.layers):
             if type(layer) == list:
                 dh = layer[0].backward(dmu) + layer[1].backward(dlogvar)
@@ -93,26 +59,26 @@ class Encoder:
         eps = np.random.randn(*logvar.shape)
         return mu + eps * std
     
-    def update_params(self,lr):
+    def update_params(self):
         for layer in self.layers:
             if 'activations' not in str(layer.__class__):
                 if 'Flatten' not in str(layer.__class__):
                     if type(layer) == list:
-                        layer[0].update_params(lr)
-                        layer[1].update_params(lr)
+                        layer[0].update_params(self.lr)
+                        layer[1].update_params(self.lr)
                     else:
-                        layer.update_params(lr)
+                        layer.update_params(self.lr)
             
 
 class Decoder:
-    def __init__(self, zdims=2, arch = (784, 200, 50)):
-    
+    def __init__(self, zdims=50, arch = (784, 256, 128), learning_rate  = 1e-8):
         self.de_x_1 = Fullyconnected(input_size=zdims, output_size=arch[2])
         self.LeakyRelu1 = LeakyRelu()
         self.de_x_2 = Fullyconnected(input_size=arch[2], output_size=arch[1])
         self.LeakyRelu2 = LeakyRelu()
         self.de_x_3 = Fullyconnected(input_size=arch[1], output_size=arch[0])
         self.sig = Sigmoid()
+        self.lr = learning_rate
         self.layers = [self.de_x_1,
                         self.LeakyRelu1,
                         self.de_x_2,
@@ -131,57 +97,48 @@ class Decoder:
             dout = layer.backward(dout)
         return dout
     
-    def update_params(self, lr):
+    def update_params(self):
         for layer in self.layers:
              if 'activations' not in str(layer.__class__):
                 if 'Flatten' not in str(layer.__class__):
-                    layer.update_params(lr)
+                    layer.update_params(self.lr)
         
-
-
 
 class Discriminator:
-    def __init__(self, input_dim=784, hidden_dim1=1024, hidden_dim2=512, hidden_dim3=256):
-        
-        
-        # Полносвязные слои для кодировщика
-        self.en_x_1 = Fullyconnected(input_size=input_dim, output_size=hidden_dim1)
+    def __init__(self, input_size=784, arch=(256, 128), learning_rate=1e-8):
+        self.fc1 = Fullyconnected(input_size=input_size, output_size=arch[0])
         self.LeakyRelu1 = LeakyRelu()
-        self.en_x_2 = Fullyconnected(input_size=hidden_dim1, output_size=hidden_dim2)
+        self.fc2 = Fullyconnected(input_size=arch[0], output_size=arch[1])
         self.LeakyRelu2 = LeakyRelu()
-        self.en_x_3 = Fullyconnected(input_size=hidden_dim2, output_size=hidden_dim3)
-        self.LeakyRelu3 = LeakyRelu()
-        self.en_x_4 = Fullyconnected(input_size=hidden_dim3, output_size=1)
+        self.fc3 = Fullyconnected(input_size=arch[1], output_size=50)
         self.sig = Sigmoid()
+        self.lr = learning_rate
 
-        
+        self.layers = [
+            self.fc1,
+            self.LeakyRelu1,
+            self.fc2,
+            self.LeakyRelu2,
+            self.fc3,
+            self.sig
+        ]
 
     def forward(self, x):
-      
-        h = self.LeakyRelu1.forward(self.en_x_1.forward(x))
-        h = self.LeakyRelu2.forward(self.en_x_2.forward(h))
-        h = self.LeakyRelu3.forward(self.en_x_3.forward(h))   
-        return self.sig.forward(self.en_x_4.forward(h))
+        for layer in self.layers:
+            x = layer.forward(x)
+        return x
 
     def backward(self, dout):
-      
-        dh = self.sig.backward(dout)
-        dh = self.en_x_4.backward(dh) 
-        dh = self.LeakyRelu3.backward(dh)
-        dh = self.en_x_3.backward(dh)
+        for layer in reversed(self.layers):
+            dout = layer.backward(dout)
+        return dout
+    
+    def update_params(self):
+        for layer in self.layers:
+            if 'activations' not in str(layer.__class__):
+                if 'Flatten' not in str(layer.__class__):
+                    layer.update_params(self.lr)
 
-        dh = self.LeakyRelu2.backward(dh)
-        dh = self.en_x_2.backward(dh)
-
-        dh = self.LeakyRelu1.backward(dh)
-        dh = self.en_x_1.backward(dh)
-       
-        return dh
-    def update_params(self, lr):
-        self.en_x_1.update_params(lr)
-        self.en_x_2.update_params(lr)
-        self.en_x_3.update_params(lr)
-        self.en_x_4.update_params(lr)
 
         
 
@@ -192,71 +149,181 @@ import numpy as np
 from tensorflow.keras.datasets import mnist
 import matplotlib.pyplot as plt
 
+
 class VAEGANTrainer:
-    def __init__(self, encoder, decoder, learning_rate=1e-4):
+    def __init__(self, encoder, decoder, discriminator):
+        self.encoder = encoder
+        self.decoder = decoder
+        self.discriminator = discriminator
+
+    def forward(self, x):
+        mu, logvar = self.encoder.forward(x)
+        z = self.encoder.reparameterize(mu, logvar)
+        x_reconstructed = self.decoder.forward(z)
+        return x_reconstructed, mu, logvar, z
+
+    def backward(self, x, x_reconstructed, mu, logvar):
+        # Backpropagation for VAE
+        d_reconstruction = 2 * (x_reconstructed - x) / x.shape[0]
+        d_decoder = self.decoder.backward(d_reconstruction)
+        d_mu = -mu / x.shape[0]
+        d_logvar = -0.5 * (1 - np.exp(logvar)) / x.shape[0]
+        self.encoder.backward(d_mu, d_logvar)
+
+    def compute_vae_loss(self, x, x_reconstructed, mu, logvar):
+        # VAE Loss
+        reconstruction_loss = np.sum((x - x_reconstructed)**2) / x.shape[0]
+        kl_divergence = -0.5 * np.sum(1 + logvar - mu**2 - np.exp(logvar)) / x.shape[0]
+        return reconstruction_loss, kl_divergence
+
+    def compute_gan_loss(self, x, x_reconstructed):
+        # GAN Loss
+        real_labels = np.ones((x.shape[0], 1))  # Real labels
+        fake_labels = np.zeros((x.shape[0], 1))  # Fake labels
+
+        real_preds = self.discriminator.forward(x)
+        fake_preds = self.discriminator.forward(x_reconstructed)
+
+        d_loss_real = -np.mean(np.log(real_preds + 1e-8))
+        d_loss_fake = -np.mean(np.log(1 - fake_preds + 1e-8))
+        d_loss = d_loss_real + d_loss_fake
+
+        g_loss = -np.mean(np.log(fake_preds + 1e-8))
+        return d_loss, g_loss, real_preds, fake_preds
+
+    def train(self, x_train, batch_size=128, epochs=50):
+        self.vae_loss_history, self.gan_loss_history, self.recon_loss_history, self.kl_loss_history = [], [], [], []
+
+        for epoch in range(epochs):
+            total_vae_loss, total_gan_loss = 0, 0
+            recon_loss_, kl_loss = 0, 0
+
+            for i in range(0, len(x_train), batch_size):
+                x_batch = x_train[i:i + batch_size]
+                batch_size_actual = x_batch.shape[0]
+
+                # VAE Forward
+                x_reconstructed, mu, logvar, z = self.forward(x_batch)
+
+                # Compute losses
+                recon_loss, kl = self.compute_vae_loss(x_batch, x_reconstructed, mu, logvar)
+                total_vae_loss += recon_loss + kl
+                recon_loss_ += recon_loss
+                kl_loss += kl
+
+                # VAE Backward
+                self.backward(x_batch, x_reconstructed, mu, logvar)
+
+                # Update Encoder and Decoder
+                for model in [self.encoder, self.decoder]:
+                    model.update_params()
+
+                # GAN Forward and Loss
+                # GAN Forward and Loss
+                d_loss, g_loss, real_preds, fake_preds = self.compute_gan_loss(x_batch, x_reconstructed)
+                total_gan_loss += d_loss
+
+                # Backward for Discriminator
+                d_real = -1 / (real_preds + 1e-8)
+                d_fake = 1 / (1 - fake_preds + 1e-8)
+                self.discriminator.backward(d_real + d_fake)
+                self.discriminator.update_params()
+
+                # Backward for Generator (Decoder)
+                d_fake_gen = np.ones_like(x_reconstructed) * -1 / (fake_preds + 1e-8)
+                self.decoder.backward(d_fake_gen)
+                self.decoder.update_params()
+
+
+            # Logging
+            avg_vae_loss = total_vae_loss / (len(x_train) / batch_size)
+            avg_gan_loss = total_gan_loss / (len(x_train) / batch_size)
+            self.vae_loss_history.append(avg_vae_loss)
+            self.gan_loss_history.append(avg_gan_loss)
+            self.recon_loss_history.append(recon_loss_ / (len(x_train) / batch_size))
+            self.kl_loss_history.append(kl_loss / (len(x_train) / batch_size))
+
+            print(f"Epoch {epoch + 1}/{epochs} - VAE Loss: {avg_vae_loss:.4f} - GAN Loss: {avg_gan_loss:.4f} - Recon Loss: {recon_loss_ / (len(x_train) / batch_size):.4f} - KL Loss: {kl_loss / (len(x_train) / batch_size):.4f}")
+
+        '''# Plot metrics
+        self.plot_metrics(vae_loss_history, gan_loss_history, kl_loss_history)
+        return vae_loss_history, gan_loss_history, recon_loss_history, kl_loss_history
+'''
+    @staticmethod
+    def plot_metrics(vae_loss_history, gan_loss_history, kl_loss_history):
+        plt.figure(figsize=(12, 6))
+        plt.plot(vae_loss_history, label="VAE Loss")
+        plt.plot(gan_loss_history, label="GAN Loss")
+        plt.plot(kl_loss_history, label="KL Loss")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("Training Losses")
+        plt.legend()
+        plt.show()
+
+
+
+
+'''
+class VAEGANTrainer:
+    def __init__(self, encoder, decoder):
         self.encoder = encoder
         self.decoder = decoder
         #self.discriminator = discriminator
-        self.learning_rate = learning_rate
+        #self.learning_rate = learning_rate
+    def forward(self, x):
+        mu, logvar = self.encoder.forward(x)
+        z = self.encoder.reparameterize(mu, logvar)
+        x_reconstructed = self.decoder.forward(z)
+        return x_reconstructed, mu, logvar
+    def backward(self, x, x_reconstructed, mu, logvar):
+        d_reconstruction = 2 * (x_reconstructed - x) / x.shape[0]
+        d_decoder = self.decoder.backward(d_reconstruction)
+        d_mu = -mu / x.shape[0]
+        d_logvar = -0.5 * (1 - np.exp(logvar)) / x.shape[0]
+        self.encoder.backward(d_mu, d_logvar)
+    def compute_loss(self, x, x_reconstructed, mu, logvar):
+        reconstruction_loss = np.sum((x - x_reconstructed)**2) / x.shape[0]
+        kl_divergence = -0.5 * np.sum(1 + logvar - mu**2 - np.exp(logvar)) / x.shape[0]
+        return reconstruction_loss,  kl_divergence, 
 
     def train(self, x_train, batch_size=128, epochs=50):
         vae_loss_history = []
-        gan_loss_history = []
-        kl_loss_history = []
-
+        recon_loss_history, kl_loss_history = [], []
         for epoch in range(epochs):
             total_vae_loss = 0
-            total_gan_loss = 0
-            total_kl_loss = 0
+            recon_loss_ = 0
+            kl_loss = 0
+            
 
             for i in range(0, len(x_train), batch_size):
                 # Формируем батч
                 x_batch = x_train[i:i + batch_size]
                 batch_size_actual = x_batch.shape[0]
 
-                # 1. Прямой проход через VAE
-                mu, logvar = self.encoder.forward(x_batch)
-                z = self.encoder.reparameterize(mu, logvar)
-                x_reconstructed = self.decoder.forward(z)
+                x_reconstructed, mu, logvar = self.forward(x_batch)
                 
-                recon_loss = binary_cross_entropy(x_reconstructed,x_batch)
+                recon_loss, kl = self.compute_loss(x_batch, x_reconstructed, mu, logvar)
                 
-                kl_loss = -0.5 * np.sum(1 + logvar - mu ** 2 - np.exp(logvar)) / batch_size_actual
-                vae_loss = recon_loss + kl_loss
+                total_vae_loss +=  recon_loss +  kl
+                kl_loss += kl
+                recon_loss_ += recon_loss
+                self.backward(x_batch, x_reconstructed, mu, logvar)
 
-
-                d_recon = (x_reconstructed - x_batch)
-                d_decoder = self.decoder.backward(d_recon)
-
-    
-                dmu = d_decoder + mu  
-                dlogvar = d_decoder * (z - mu) * 0.5 * np.exp(logvar)  # Градиенты по logvar
-
-                # Обратное распространение через кодировщик
-                self.encoder.backward(dmu, dlogvar)
-                            
-
-                
-
-                # Сохранение метрик
-                total_vae_loss += vae_loss
-                #total_gan_loss += gen_loss
-                total_kl_loss += kl_loss
-
-                # Обновление параметров
                 for model in [self.encoder, self.decoder]:
-                    model.update_params(self.learning_rate)
+                    model.update_params()
 
-            # Сохранение истории
-            vae_loss_history.append(total_vae_loss / len(x_train))
-            #gan_loss_history.append(total_gan_loss / len(x_train))
-            kl_loss_history.append(total_kl_loss / len(x_train))
+            avg_loss = total_vae_loss / (len(x_train) / batch_size)
+            vae_loss_history.append(avg_loss)
+            recon_loss_history.append(recon_loss_ / (len(x_train) / batch_size) )
+            kl_loss_history.append(kl_loss/ (len(x_train) / batch_size)  )
 
             # Вывод метрик
-            print(f"Epoch {epoch + 1}/{epochs} - VAE Loss: {total_vae_loss:.4f}, GAN Loss: {total_gan_loss:.4f}, KL Loss: {total_kl_loss:.4f}")
+            print(f"Epoch {epoch + 1}/{epochs} - VAE Loss: {avg_loss:.4f} - recon_loss: {recon_loss_ / (len(x_train) / batch_size):.4f} - KL Loss: {kl_loss/ (len(x_train) / batch_size):.4f} -")
 
         # Построение графиков
-        self.plot_metrics(vae_loss_history, gan_loss_history, kl_loss_history)
+        self.plot_metrics(vae_loss_history, recon_loss_history, kl_loss_history)
+        return vae_loss_history, recon_loss_history,kl_loss_history
 
     @staticmethod
     def plot_metrics(vae_loss_history, gan_loss_history, kl_loss_history):
@@ -269,3 +336,5 @@ class VAEGANTrainer:
         plt.title("Training Losses")
         plt.legend()
         plt.show()
+
+'''
