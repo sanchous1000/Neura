@@ -97,11 +97,6 @@ class Relu:
         dx = dout.copy()
         dx[self.X <= 0] = 0
         return dx
-    def backward_(self,dout):
-        dx = dout.copy()
-        dx[self.X <= 0] = 0
-        return dx
-    
 
 
 class LeakyRelu:
@@ -136,9 +131,6 @@ class Sigmoid:
         x = np.clip(x, 1e-15, 1 - 1e-15)
         return 1 / (1 + np.exp(-x))
     def backward(self, x):
-        sig = self.forward(x)
-        return sig * (1 - sig)
-    def backward_(self, x):
         sig = self.forward(x)
         return sig * (1 - sig)
 
