@@ -127,6 +127,8 @@ class Tanh:
         self.X = X
         return self.a * np.tanh(X)
     def backward(self, X):
+        return X *  (1-np.tanh(self.X)**2)  
+    def backward_(self, X):
         return X *  (1-np.tanh(self.X)**2)   
 
 class Sigmoid:

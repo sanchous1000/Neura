@@ -1,9 +1,59 @@
 import numpy as np
-from main_cl import Fullyconnected
 from activations import LeakyRelu, Tanh, Sigmoid, Relu
-
+rng = np.random.default_rng(51)
 import numpy as np
 
+class Fullyconnected: 
+    def __init__(self, input_size, output_size, derivative = False ):
+        self.derivative = derivative
+        #
+        self.W = self._init_weights(input_size, output_size)
+        self.b = self._init_biases(output_size)
+        #opt_params
+        self.t = 1
+        self.mW =np.zeros_like(self.W) 
+        self.mb = np.zeros_like(self.b) 
+        self.vW =np.zeros_like(self.W) 
+        self.vb = np.zeros_like(self.b) 
+
+    def forward(self, X):
+        self.a_l = X
+        z = np.dot(X, self.W.T) + self.b
+        return z 
+
+    def backward(self, dout):
+        m =  self.a_l.shape[0]
+        self.dW = np.dot(dout.T, self.a_l) / m 
+        self.db = np.sum(dout, axis = 0, keepdims=True) / m
+        delta = np.dot(dout, self.W)
+        return delta
+    
+    def backward_(self, dout):
+        m =  self.a_l.shape[0]
+        delta = np.dot(dout, self.W)
+        return delta
+    
+    def update_params(self, lr=0.001, beta_1=0.9, beta_2=0.999, eps=1e-08): 
+        self.mW  = beta_1*self.mW  + (1-beta_1)*self.dW
+        self.mb  = beta_1*self.mb  + (1-beta_1)*self.db 
+        self.vW  = beta_2*self.vW  + (1-beta_2)*(self.dW **2)
+        self.vb  = beta_2*self.vb  + (1-beta_2)*(self.db **2)
+        mW_corr = self.mW  / (1-beta_1**self.t)
+        mb_corr = self.mb  / (1-beta_1**self.t)
+        vW_corr = self.vW  / (1-beta_2**self.t)
+        vb_corr = self.vb  / (1-beta_2**self.t)
+        self.W -= lr*mW_corr / (np.sqrt(vW_corr)+eps)
+        self.b  -= lr*mb_corr / (np.sqrt(vb_corr)+eps)
+        self.t += 1
+    def _init_weights(self, input_size, output_size):
+        net_in = input_size
+        net_out = output_size
+        limit = np.sqrt(6. / (net_in + net_out))
+        return rng.uniform(-limit, limit + 1e-5, size=(net_out, net_in)) 
+    #
+    def _init_biases(self, output_size):
+        return np.zeros((1,output_size)) 
+    
     
 
 
@@ -103,26 +153,28 @@ class Decoder:
                     layer.update_params(lr)
         
 
+from activations import LeakyRelu, Tanh, Sigmoid, Relu
+
 class Discriminator:
-    def __init__(self, input_size=784, arch=(256, 128, 64), learning_rate=1e-8):
+    def __init__(self, input_size=784, arch=(256, 128), learning_rate=1e-8):
         self.fc1 = Fullyconnected(input_size=input_size, output_size=arch[0])
-        self.LeakyRelu1 = Relu()
+        #self.LeakyRelu1 = Tanh()
         self.fc2 = Fullyconnected(input_size=arch[0], output_size=arch[1])
-        self.LeakyRelu2 = Relu()
-        self.fc3 = Fullyconnected(input_size=arch[1], output_size=arch[1])
-        self.LeakyRelu3 = Relu()
-        self.fc4 = Fullyconnected(input_size=arch[1], output_size=1)
+       # self.LeakyRelu2 = Tanh()
+        self.fc3 = Fullyconnected(input_size=arch[1], output_size=1)
+        #self.LeakyRelu3 = Relu()
+        #self.fc4 = Fullyconnected(input_size=arch[1], output_size=1)
         self.sig = Sigmoid()
         self.lr = learning_rate
 
         self.layers = [
             self.fc1,
-            self.LeakyRelu1,
+            #self.LeakyRelu1,
             self.fc2,
-            self.LeakyRelu2,
+            #self.LeakyRelu2,
             self.fc3,
-            self.LeakyRelu3,
-            self.fc4,
+           # self.LeakyRelu3,
+           # self.fc4,
             self.sig
         ]
 
@@ -149,6 +201,75 @@ class Discriminator:
 
         
 
+class GAN_:
+    def __init__(self, generator, vae, discriminator, beta=1, dec_reg=1):
+        self.vae = vae
+        self.encoder = generator
+        self.discriminator = discriminator
+        self.beta = beta
+        self.dec_reg = dec_reg
+
+    def forward(self, x):
+        recon,  mu, logvar, recon_loss, kl = self.vae.forward(x)
+        real_preds = self.discriminator.forward(x)
+        fake_preds = self.discriminator.forward(recon)
+        return real_preds, recon,  fake_preds, mu, logvar,  recon_loss, kl
+
+    def binary_l(self, predictions, targets):
+        """Бинарная кросс-энтропия."""
+        predictions = np.clip(predictions, 1e-8, 1 - 1e-8)  # Для стабильности
+        grad = (predictions - targets) / (predictions * (1 - predictions))
+        grad /= targets.shape[0]  # Нормализация по числу примеров в батче
+        loss = -np.mean(targets * np.log(predictions) + (1 - targets) * np.log(1 - predictions))
+        return loss, grad
+
+    def train(self, x_train, batch_size=128, epochs=50):
+        self.total_d_loss, self.total_g_loss = [], []
+        self.total_recon_loss, self.total_kl_loss = [], []
+
+
+        for epoch in range(epochs):
+            total_d_loss, total_g_loss,total_recon_loss, total_kl_loss  = 0, 0, 0,0
+
+            for i in range(0, len(x_train), batch_size):
+                x_batch = x_train[i:i + batch_size]
+
+                '''real_labels = np.ones((x_batch.shape[0], 1))
+                fake_labels = np.zeros((x_batch.shape[0], 1))'''
+                
+                real_preds, recon, fake_preds, mu, logvar, recon_loss, kl = self.forward(x_batch)
+                
+                total_recon_loss += recon_loss 
+                total_kl_loss += kl
+
+
+                d_loss = -(np.sum( real_preds * np.log(fake_preds +  1e-8)) ) / x_batch.shape[0]
+                total_g_loss += d_loss
+                d_out = real_preds - fake_preds             
+                
+                #g_loss = -np.mean(np.log(fake_preds + 1e-8))
+                
+                grad_g_loss = self.discriminator.backward_(d_out)
+                self.vae.backward(x_batch, recon, mu, logvar, grad_g_loss)
+                self.discriminator.backward(d_out)
+                self.discriminator.update_params()
+
+                
+
+
+            # === Logging ===
+            avg_d_loss = total_d_loss  / (len(x_train) / batch_size)
+            avg_g_loss = total_g_loss / (len(x_train) / batch_size)
+            avg_kl_loss = total_kl_loss / (len(x_train) / batch_size)
+            avg_recon_loss  = total_recon_loss/ (len(x_train) / batch_size)
+            self.total_d_loss.append(avg_d_loss)
+            self.total_g_loss.append(avg_g_loss)
+            self.total_recon_loss.append(avg_recon_loss)
+            self.total_kl_loss.append(avg_kl_loss)
+            
+            print(f"Epoch {epoch + 1}/{epochs} - D Loss: {avg_d_loss:.4f} - G Loss: {avg_g_loss:.4f} - Recon: {avg_recon_loss:.4f} - Kl loss: {avg_kl_loss:.4f} ")
+        
+
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -168,15 +289,21 @@ class VAEGANTrainer:
         mu, logvar = self.encoder.forward(x)
         z , self.eps = self.encoder.reparameterize(mu, logvar)
         x_reconstructed = self.decoder.forward(z)
-        return x_reconstructed, mu, logvar, z
+        recon_loss, kl = self.compute_vae_loss(x, x_reconstructed, mu, logvar)
+                
+        return x_reconstructed, mu, logvar, recon_loss, kl
 
-    def backward(self, x, x_reconstructed, mu, logvar):
-        # Backpropagation for VAE
-        d_reconstruction = 2 * (x_reconstructed - x) / x.shape[0]
-        d_decoder = self.decoder.backward(d_reconstruction)
+    def backward(self, x, x_reconstructed, mu, logvar, d_gan = 0):
+        d_reconstruction = 2 * (x_reconstructed - x) / x.shape[0] - d_gan
+        d_decoder = self.decoder.backward(d_reconstruction - d_gan / x.shape[0])
         d_mu = (d_decoder + self.beta *  mu) / x.shape[0]
         d_logvar =  (0.5 * (np.exp(logvar) - 1) + (d_decoder * 0.5 * np.exp(logvar)*self.eps))/ x.shape[0]
         self.encoder.backward(d_mu, d_logvar)
+        
+        for model in [self.encoder, self.decoder]:
+            model.update_params()
+       
+
 
     def compute_vae_loss(self, x, x_reconstructed, mu, logvar):
         # VAE Loss
@@ -196,20 +323,15 @@ class VAEGANTrainer:
 
             for i in range(0, len(x_train), batch_size):
                 x_batch = x_train[i:i + batch_size]
-                x_reconstructed, mu, logvar, z = self.forward(x_batch)
+                x_reconstructed, mu, logvar, recon_loss, kl  = self.forward(x_batch)
 
                 # Compute losses
-                recon_loss, kl = self.compute_vae_loss(x_batch, x_reconstructed, mu, logvar)
                 total_vae_loss += recon_loss + kl
                 recon_loss_ += recon_loss
                 kl_loss += self.beta * kl
 
                 # VAE Backward
                 self.backward(x_batch, x_reconstructed, mu, logvar)
-
-                # Update Encoder and Decoder
-                for model in [self.encoder, self.decoder]:
-                    model.update_params()
 
 
             # Logging
