@@ -3,6 +3,30 @@ from activations import LeakyRelu, Tanh, Sigmoid, Relu
 rng = np.random.default_rng(51)
 import numpy as np
 
+
+
+import matplotlib.pyplot as plt
+def visualize_reconstruction(decoder,encoder , test_data, num_images=10):
+    # Выберите случайные изображения
+    indices = np.random.choice(len(test_data), num_images)
+    original_images = test_data[indices]
+    reconstructed_images = [decoder.forward(encoder.forward(img.reshape(1, -1))[0]) for img in original_images]
+
+    # Построение графика
+    plt.figure(figsize=(15, 5))
+    for i in range(num_images):
+        # Оригинал
+        plt.subplot(2, num_images, i + 1)
+        plt.imshow(original_images[i].reshape(28, 28), cmap='gray')
+        plt.axis('off')
+        plt.title("Original")
+        # Реконструкция
+        plt.subplot(2, num_images, i + 1 + num_images)
+        plt.imshow(reconstructed_images[i].reshape(28, 28), cmap='gray')
+        plt.axis('off')
+        plt.title("Reconstructed")
+    plt.show()
+
 class Fullyconnected: 
     def __init__(self, input_size, output_size, derivative = False ):
         self.derivative = derivative
@@ -202,12 +226,10 @@ class Discriminator:
         
 
 class GAN_:
-    def __init__(self, generator, vae, discriminator, beta=1, dec_reg=1):
+    def __init__(self, generator, vae, discriminator, beta=1, dec_lam=1):
         self.vae = vae
         self.encoder = generator
         self.discriminator = discriminator
-        self.beta = beta
-        self.dec_reg = dec_reg
 
     def forward(self, x):
         recon,  mu, logvar, recon_loss, kl = self.vae.forward(x)
@@ -249,7 +271,7 @@ class GAN_:
                 
                 #g_loss = -np.mean(np.log(fake_preds + 1e-8))
                 
-                grad_g_loss = self.discriminator.backward_(d_out)
+                grad_g_loss = self.discriminator.backward_(d_out / x_batch.shape[0])
                 self.vae.backward(x_batch, recon, mu, logvar, grad_g_loss)
                 self.discriminator.backward(d_out)
                 self.discriminator.update_params()
@@ -258,6 +280,7 @@ class GAN_:
 
 
             # === Logging ===
+            visualize_reconstruction(decoder=self.vae.decoder, encoder=self.vae.encoder, test_data=x_train)
             avg_d_loss = total_d_loss  / (len(x_train) / batch_size)
             avg_g_loss = total_g_loss / (len(x_train) / batch_size)
             avg_kl_loss = total_kl_loss / (len(x_train) / batch_size)
@@ -279,10 +302,10 @@ import matplotlib.pyplot as plt
 
 
 class VAEGANTrainer:
-    def __init__(self, encoder, decoder, beta = 1):
+    def __init__(self, encoder, decoder, beta = 1, dec_lam = 1):
         self.encoder = encoder
         self.decoder = decoder
-
+        self.dec_lam = dec_lam
         self.beta = beta
 
     def forward(self, x):
@@ -294,10 +317,10 @@ class VAEGANTrainer:
         return x_reconstructed, mu, logvar, recon_loss, kl
 
     def backward(self, x, x_reconstructed, mu, logvar, d_gan = 0):
-        d_reconstruction = 2 * (x_reconstructed - x) / x.shape[0] - d_gan
-        d_decoder = self.decoder.backward(d_reconstruction - d_gan / x.shape[0])
-        d_mu = (d_decoder + self.beta *  mu) / x.shape[0]
-        d_logvar =  (0.5 * (np.exp(logvar) - 1) + (d_decoder * 0.5 * np.exp(logvar)*self.eps))/ x.shape[0]
+        d_reconstruction =  self.dec_lam * (2 * (x_reconstructed - x) / x.shape[0]) - d_gan
+        d_decoder = self.decoder.backward(d_reconstruction / x.shape[0])
+        d_mu = (d_decoder +  self.beta * mu) / x.shape[0] #(d_decoder +   self.beta * mu) / x.shape[0]
+        d_logvar = self.beta * (d_decoder * 0.5 * np.exp(logvar)*self.eps)/ x.shape[0]
         self.encoder.backward(d_mu, d_logvar)
         
         for model in [self.encoder, self.decoder]:
@@ -335,6 +358,7 @@ class VAEGANTrainer:
 
 
             # Logging
+            visualize_reconstruction(decoder=self.decoder, encoder=self.encoder, test_data=x_train)
             avg_vae_loss = total_vae_loss / (len(x_train) / batch_size)
             avg_gan_loss = total_gan_loss / (len(x_train) / batch_size)
             self.vae_loss_history.append(avg_vae_loss)

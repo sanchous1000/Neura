@@ -1,55 +1,7 @@
 import numpy as np 
+
+
 rng = np.random.default_rng(51)
-
-
-import numpy as np
-
-class LayerNorm:
-    def __init__(self, input_dim, epsilon=1e-5):
-        """
-        Инициализация LayerNorm
-        input_dim: размер входного вектора
-        epsilon: маленькое значение для предотвращения деления на 0
-        """
-        self.gamma = np.ones((1, input_dim))  # Масштабирование
-        self.beta = np.zeros((1, input_dim))  # Смещение
-        self.epsilon = epsilon
-
-    def forward(self, x):
-        """
-        Прямой проход
-        x: входной тензор, размер (batch_size, input_dim)
-        """
-        self.x = x
-        self.mean = np.mean(x, axis=1, keepdims=True)
-        self.variance = np.var(x, axis=1, keepdims=True)
-        self.x_norm = (x - self.mean) / np.sqrt(self.variance + self.epsilon)
-        self.out = self.gamma * self.x_norm + self.beta
-        return self.out
-
-    def backward(self, dout):
-        """
-        Обратный проход
-        dout: градиент по выходу слоя, размер (batch_size, input_dim)
-        """
-        batch_size, input_dim = self.x.shape
-
-        # Градиенты по gamma и beta
-        dgamma = np.sum(dout * self.x_norm, axis=0, keepdims=True)
-        dbeta = np.sum(dout, axis=0, keepdims=True)
-
-        # Градиент по нормализованному входу
-        dx_norm = dout * self.gamma
-
-        # Градиенты по x
-        dvar = np.sum(dx_norm * (self.x - self.mean) * -0.5 * np.power(self.variance + self.epsilon, -1.5), axis=1, keepdims=True)
-        dmean = np.sum(dx_norm * -1 / np.sqrt(self.variance + self.epsilon), axis=1, keepdims=True) + \
-                dvar * np.sum(-2 * (self.x - self.mean), axis=1, keepdims=True) / input_dim
-        dx = dx_norm / np.sqrt(self.variance + self.epsilon) + \
-             dvar * 2 * (self.x - self.mean) / input_dim + \
-             dmean / input_dim
-
-        return dx, dgamma, dbeta
 
 class Relu:
     def __init__(self):
@@ -65,6 +17,61 @@ class Relu:
         dx = dout.copy()
         dx[self.X <= 0] = 0
         return dx
+
+class LayerNorm:
+    def __init__(self, input_dim, epsilon=1e-5):
+        self.input_dim = input_dim
+        self.gamma = np.ones((1, input_dim))  # Масштабирование
+        self.beta = np.zeros((1, input_dim))  # Смещение
+        self.epsilon = epsilon
+         #opt_params
+        self.t = 1
+        self.mW =np.zeros_like(self.gamma) 
+        self.mb = np.zeros_like(self.gamma) 
+        self.vW =np.zeros_like(self.gamma) 
+        self.vb = np.zeros_like(self.gamma) 
+
+    def forward(self, x):
+        self.x = x
+        self.mean = np.mean(x, axis=1, keepdims=True)
+        self.variance = np.var(x, axis=1, keepdims=True)
+        self.x_norm = (x - self.mean) / np.sqrt(self.variance + self.epsilon)
+        self.out = self.gamma * self.x_norm + self.beta
+        return self.out
+
+    def backward(self, dout):
+        # Градиенты по gamma и beta
+        self.dW = np.sum(dout * self.x_norm, axis=(1,2))
+        self.db = np.sum(dout, axis=(1,2))
+
+        # Градиент по нормализованному входу
+        dx_norm = dout * self.gamma
+
+        # Градиенты по x
+        dvar = np.sum(dx_norm * (self.x - self.mean) * -0.5 * np.power(self.variance + self.epsilon, -1.5), axis=1, keepdims=True)
+        dmean = np.sum(dx_norm * -1 / np.sqrt(self.variance + self.epsilon), axis=1, keepdims=True) + \
+                dvar * np.sum(-2 * (self.x - self.mean), axis=1, keepdims=True) /  self.input_dim
+        dx = dx_norm / np.sqrt(self.variance + self.epsilon) + \
+             dvar * 2 * (self.x - self.mean) /  self.input_dim + \
+             dmean /  self.input_dim
+        #self.update_params(dgamma,dbeta )
+
+        return dx
+    def update_params(self, lr=0.001, beta_1=0.9, beta_2=0.999, eps=1e-08): 
+        self.mW  = beta_1*self.mW  + (1-beta_1)*self.dW
+        self.mb  = beta_1*self.mb  + (1-beta_1)*self.db 
+        self.vW  = beta_2*self.vW  + (1-beta_2)*(self.dW **2)
+        self.vb  = beta_2*self.vb  + (1-beta_2)*(self.db **2)
+        mW_corr = self.mW  / (1-beta_1**self.t)
+        mb_corr = self.mb  / (1-beta_1**self.t)
+        vW_corr = self.vW  / (1-beta_2**self.t)
+        vb_corr = self.vb  / (1-beta_2**self.t)
+        self.W -= lr*mW_corr / (np.sqrt(vW_corr)+eps)
+        self.b  -= lr*mb_corr / (np.sqrt(vb_corr)+eps)
+        self.t += 1
+    
+
+
 class Fullyconnected: 
     def __init__(self, input_size, output_size, derivative = False, bias = True ):
         self.derivative = derivative
@@ -85,8 +92,12 @@ class Fullyconnected:
 
     def backward(self, dout):
         m =  self.a_l.shape[0]
-        self.dW = np.dot(dout.T, self.a_l) / m 
-        self.db = np.sum(dout, axis = 0, keepdims=True) / m
+        try:
+            self.dW = np.dot(dout.transpose(0, 2, 1), self.a_l) / m 
+        except:
+            self.dW = np.dot(dout.T, self.a_l) / m 
+
+        self.db = np.sum(dout, axis = 1) / m
         delta = np.dot(dout, self.W)
         return delta
     
@@ -116,35 +127,14 @@ class Softmax:
     def __init__(self):
         self.output = None
 
-    def forward(self, x):
-        """
-        Прямой проход для softmax.
-
-        :param x: Входной массив, 2D-матрица (batch_size, num_classes)
-        :return: Массив с вероятностями после применения softmax.
-        """
-        # Нормализация для избежания численной нестабильности
-        e_x = np.exp(x - np.max(x, axis=1, keepdims=True))
-        self.output = e_x / np.sum(e_x, axis=1, keepdims=True)
+    def forward(self, X):
+        exp_X = np.exp(X - np.max(X, axis=-1, keepdims=True))
+        self.output = exp_X / np.sum(exp_X, axis=-1, keepdims=True)
         return self.output
 
-    def backward(self, dout):
-        """
-        Обратный проход для softmax.
-
-        :param dout: Градиенты от следующего слоя
-        :return: Градиенты относительно входа
-        """
-        batch_size, num_classes = self.output.shape
-        dx = np.zeros_like(dout)
-        
-        # Jacobian матрица для softmax
-        for i in range(batch_size):
-            y = self.output[i]
-            jacobian = np.diag(y) - np.outer(y, y)
-            dx[i] = np.dot(jacobian, dout[i])
-        
-        return dx
+    def backward(self, dOut):
+        dX = self.output * (dOut - np.sum(dOut * self.output, axis=-1, keepdims=True))
+        return dX
 
 
 class Head:
@@ -156,27 +146,58 @@ class Head:
         self.softmax = Softmax()
     
     def forward(self, X):
-        B, T, C = X.shape
-        key = self.k.forward(X)
-        query = self.q.forward(X)
-        
-        value = self.v.forward(X)
-        print(key.transpose(0, 2, 1).shape)
-        self.w = np.matmul(query,key.transpose(0, 2, 1))
-
-        output = np.matmul(self.softmax.forward(self.w), value) * self.head_size ** -0.5
+        self.key = self.k.forward(X)
+        self.query = self.q.forward(X)
+        self.value = self.v.forward(X)
+        self.w = np.matmul(self.query, self.key.transpose(0, 2, 1))
+        self.ws = self.softmax.forward(self.w)
+        output = np.matmul(self.ws, self.value) * self.head_size ** -0.5
         return output
+    
+    def backward(self, dOut):
+        dOut = dOut * (self.head_size ** -0.5)
+        
+        dValue = np.matmul(self.ws.transpose(0, 2, 1), dOut)
+        dW_softmax = np.matmul(dOut, self.value.transpose(0, 2, 1))
+        dW = self.softmax.backward(dW_softmax)
+        
+        
+        dQuery = np.matmul(dW, self.key)
+        dKey = np.matmul(dW.transpose(0, 2, 1), self.query)
+
+        
+        dX_v = self.v.backward(dValue)
+        dX_q = self.q.backward(dQuery)
+        dX_k = self.k.backward(dKey)
+
+        dX = dX_v + dX_q + dX_k
+        return dX
 
 
 
 class MultiHeadAttention:
     def __init__(self, number_heads,  head_size, n_emb ):
-        self.heads = [Head(head_size=head_size) for _ in range(number_heads)]
+        self.heads = [Head(head_size=head_size, C = n_emb) for _ in range(number_heads)]
         self.proj = Fullyconnected(n_emb, n_emb)
     def forward(self, X):
-        out = np.concat([head.forward(X) for head in self.heads], axis=-1)
+        out = np.concatenate([head.forward(X) for head in self.heads], axis=-1)
         out = self.proj.forward(out)
         return out
+    
+    def backward(self, dOut):
+        # Backward через проекционный слой
+        dConcat = self.proj.backward(dOut)
+
+        # Backward через все головы
+        dX_heads = []
+        split_dOut = np.split(dConcat, len(self.heads), axis=-1)
+
+        for i, head in enumerate(self.heads):
+            dX_heads.append(head.backward(split_dOut[i]))
+
+        dX = np.sum(np.stack(dX_heads), axis=0)
+        return dX
+    
 
 class Feedforward:
     def __init__(self,n_emb ):
@@ -196,24 +217,67 @@ class Feedforward:
         for layer in reversed(self.layers):
             dout = layer.backward(dout)
         return dout
+    
+class Meaner:
+    def __init__(self):
+        
+        pass 
+    def forward(self, X):
+        self.time = X.shape[1]
+        return np.mean(X, axis = 1)
+    def backward(self, dout):
+        din = dout[:, np.newaxis, :] / self.time  # Расширяем размерность вдоль оси tim
+        return np.repeat(din, self.time, axis=1) 
+    
+class Classification:
+    def __init__(self,input,output ):
+        self.meaner = Meaner()
+        self.fc1 = Fullyconnected(input, output)
+        self.sm = Softmax()
+        self.layers = [
+            self.meaner,
+            self.fc1,
+             self.sm
+        ]
+    def forward(self, X):
+        for layer in self.layers:
+            X = layer.forward(X)
+        return X
+    def backward(self, dout):
+        for layer in reversed(self.layers):
+            dout = layer.backward(dout)
+        return dout
+
+    
 
 
-class Block:
+
+class Block_encoder:
     def __init__(self, n_emb, n_head):
         head_size = n_emb//n_head
-        self.self_att = MultiHeadAttention(n_head, head_size)
+        self.self_att = MultiHeadAttention(n_head, head_size, n_emb)
         self.fd = Feedforward(n_emb)
         self.ln1 = LayerNorm(n_emb)
         self.ln2 = LayerNorm(n_emb)
+        
     def forward(self, X):
-        X = X + self.self_att.forward(self.ln1.forward(X))
-        X = X + self.fd.forward(self.ln2.forward(X))
+        self.X = X 
+        self.self_att_out = self.self_att.forward(X)
+        self.ln1_out = X + self.ln1.forward(self.self_att_out )
+        self.fd_out = self.fd.forward(self.ln1_out)
+        self.ln2_out = self.ln1_out + self.ln2.forward(self.fd_out)
+       
+    
+
+        return  self.ln2_out
+
+    def backward(self, dout):
+        dout_ln2 = self.ln2.backward(dout)
+        dout_fd = dout + self.fd.backward(dout_ln2)
+        dout_ln1 = self.ln1.backward(dout_fd)
+        dout_self_att = self.self_att.backward(dout_ln1)
+        return dout_fd +  dout_self_att
 
 
 
-
-
-c = Head(16, 32)
-r = c.forward(np.ones((4,8,32)))
-print(r)
         
