@@ -1,5 +1,5 @@
 
-import numpy as np 
+import cupy as np 
   
 
 rng = np.random.default_rng(51)
@@ -339,3 +339,4 @@ class SentimentEncoder:
         self.classifier.update_params(lr)
     
     
+

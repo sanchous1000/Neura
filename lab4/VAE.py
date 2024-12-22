@@ -290,7 +290,7 @@ class GAN_:
             self.total_recon_loss.append(avg_recon_loss)
             self.total_kl_loss.append(avg_kl_loss)
             
-            print(f"Epoch {epoch + 1}/{epochs} - D Loss: {avg_d_loss:.4f} - G Loss: {avg_g_loss:.4f} - Recon: {avg_recon_loss:.4f} - Kl loss: {avg_kl_loss:.4f} ")
+            print(f"Epoch {epoch + 1}/{epochs} D Loss: {avg_g_loss:.4f} - G loss: {avg_recon_loss:.4f} ")
         
 
 
@@ -366,7 +366,6 @@ class VAEGANTrainer:
             self.recon_loss_history.append(recon_loss_ / (len(x_train) / batch_size))
             self.kl_loss_history.append(kl_loss / (len(x_train) / batch_size))
 
-            print(f"Epoch {epoch + 1}/{epochs} - VAE Loss: {avg_vae_loss:.4f} - GAN Loss: {avg_gan_loss:.4f} - Recon Loss: {recon_loss_ / (len(x_train) / batch_size):.4f} - KL Loss: {kl_loss / (len(x_train) / batch_size):.4f}")
-
+            print(f"Epoch {epoch + 1}/{epochs} - Recon Loss: {recon_loss_ / (len(x_train) / batch_size):.4f} - KL Loss: {kl_loss / (len(x_train) / batch_size):.4f}")
 
 
