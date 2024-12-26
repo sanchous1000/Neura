@@ -7,20 +7,16 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 def visualize_reconstruction(decoder,encoder , test_data, num_images=10):
-    # Выберите случайные изображения
     indices = np.random.choice(len(test_data), num_images)
     original_images = test_data[indices]
     reconstructed_images = [decoder.forward(encoder.forward(img.reshape(1, -1))[0]) for img in original_images]
 
-    # Построение графика
     plt.figure(figsize=(15, 5))
     for i in range(num_images):
-        # Оригинал
         plt.subplot(2, num_images, i + 1)
         plt.imshow(original_images[i].reshape(28, 28), cmap='gray')
         plt.axis('off')
         plt.title("Original")
-        # Реконструкция
         plt.subplot(2, num_images, i + 1 + num_images)
         plt.imshow(reconstructed_images[i].reshape(28, 28), cmap='gray')
         plt.axis('off')
@@ -54,7 +50,7 @@ class Fullyconnected:
     
     def backward_(self, dout):
         m =  self.a_l.shape[0]
-        delta = np.dot(dout, self.W)
+        delta = np.dot(dout, self.W) / m
         return delta
     
     def update_params(self, lr=0.001, beta_1=0.9, beta_2=0.999, eps=1e-08): 
@@ -102,7 +98,6 @@ class Encoder:
         
 
     def forward(self, x):
-        # Прямой проход
         h = x
         for layer in self.layers:
             if type(layer) != list:
@@ -113,7 +108,7 @@ class Encoder:
         return mu, logvar
 
     def backward(self, dmu, dlogvar):
-        # Градиенты для mu и logvar
+      
    
         for layer in reversed(self.layers):
             if type(layer) == list:
@@ -182,9 +177,9 @@ from activations import LeakyRelu, Tanh, Sigmoid, Relu
 class Discriminator:
     def __init__(self, input_size=784, arch=(256, 128), learning_rate=1e-8):
         self.fc1 = Fullyconnected(input_size=input_size, output_size=arch[0])
-        #self.LeakyRelu1 = Tanh()
+        self.LeakyRelu1 = Tanh()
         self.fc2 = Fullyconnected(input_size=arch[0], output_size=arch[1])
-       # self.LeakyRelu2 = Tanh()
+        self.LeakyRelu2 = Tanh()
         self.fc3 = Fullyconnected(input_size=arch[1], output_size=1)
         #self.LeakyRelu3 = Relu()
         #self.fc4 = Fullyconnected(input_size=arch[1], output_size=1)
@@ -193,9 +188,9 @@ class Discriminator:
 
         self.layers = [
             self.fc1,
-            #self.LeakyRelu1,
+            self.LeakyRelu1,
             self.fc2,
-            #self.LeakyRelu2,
+            self.LeakyRelu2,
             self.fc3,
            # self.LeakyRelu3,
            # self.fc4,
@@ -224,6 +219,82 @@ class Discriminator:
 
 
         
+
+
+
+class GAN:
+    def __init__(self, generator, vae, discriminator, beta=1, dec_lam=1):
+        self.vae = vae
+        self.encoder = generator
+        self.discriminator = discriminator
+
+    def forward(self, x, recon):
+        #recon,  mu, logvar, recon_loss, kl = self.vae.forward(x)
+        real_preds = self.discriminator.forward(x)
+        fake_preds = self.discriminator.forward(recon)
+        return real_preds, recon,  fake_preds #, mu, logvar,  recon_loss, kl
+
+    def binary_l(self, predictions, targets):
+        """Бинарная кросс-энтропия."""
+        predictions = np.clip(predictions, 1e-8, 1 - 1e-8)  # Для стабильности
+        grad = (predictions - targets) / (predictions * (1 - predictions))
+        grad /= targets.shape[0]  # Нормализация по числу примеров в батче
+        loss = -np.mean(targets * np.log(predictions) + (1 - targets) * np.log(1 - predictions))
+        return loss, grad
+
+    def train(self, x_train, batch_size=128, epochs=50):
+        self.total_d_loss, self.total_g_loss = [], []
+        self.total_recon_loss, self.total_kl_loss = [], []
+
+
+        for epoch in range(epochs):
+            total_d_loss, total_g_loss,total_recon_loss, total_kl_loss  = 0, 0, 0,0
+
+            for i in range(0, len(x_train), batch_size):
+                x_batch = x_train[i:i + batch_size]
+                recon = np.random.randn(batch_size, 50)
+
+                real_labels = np.ones((x_batch.shape[0], 1))
+                fake_labels = np.zeros((x_batch.shape[0],1))
+                
+                real_preds, recon, fake_preds  = self.forward(x_batch, self.vae.decoder.forward(recon))
+                
+                d_loss_real, dreal = self.binary_l(real_preds, real_labels) 
+                d_loss_fake, dfake = self.binary_l(fake_preds, fake_labels)
+                total_d_loss += d_loss_real + d_loss_fake
+
+                g_loss, ggrad = self.binary_l(fake_preds, real_labels)
+                total_g_loss += g_loss
+                
+               
+                
+                self.discriminator.backward(0.005 * (dreal + dfake)) 
+                #self.discriminator.backward(dfake)
+                self.vae.decoder.backward( 0.005 * (2 * (recon - x_batch) / x_batch.shape[0]) - self.discriminator.backward_(ggrad)) # 0.001 * ((2 * (recon - x_batch) / x_batch.shape[0])
+                self.discriminator.update_params()
+                self.vae.decoder.update_params()
+                
+                
+
+                
+
+
+            # === Logging ===
+            visualize_reconstruction(decoder=self.vae.decoder, encoder=self.vae.encoder, test_data=x_train)
+            avg_d_loss = total_d_loss  / (len(x_train) / batch_size)
+            avg_g_loss = total_g_loss / (len(x_train) / batch_size)
+            avg_kl_loss = total_kl_loss / (len(x_train) / batch_size)
+            avg_recon_loss  = total_recon_loss/ (len(x_train) / batch_size)
+            self.total_d_loss.append(avg_d_loss)
+            self.total_g_loss.append(avg_g_loss)
+            self.total_recon_loss.append(avg_recon_loss)
+            self.total_kl_loss.append(avg_kl_loss)
+            
+            print(f"Epoch {epoch + 1}/{epochs} D Loss: {avg_d_loss:.4f} - G loss: {avg_g_loss:.4f} ")
+        
+
+
+
 
 class GAN_:
     def __init__(self, generator, vae, discriminator, beta=1, dec_lam=1):

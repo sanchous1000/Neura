@@ -42,14 +42,10 @@ class LayerNorm:
         return self.out
 
     def backward(self, dout):
-        # Градиенты по gamma и beta
+       
         self.dW = np.sum(dout * self.x_norm, axis=0)
         self.db = np.sum(dout, axis=0)
-
-        # Градиент по нормализованному входу
         dx_norm = dout * self.gamma
-
-        # Градиенты по x
         dvar = np.sum(dx_norm * (self.x - self.mean) * -0.5 * np.power(self.variance + self.epsilon, -1.5), axis=-1, keepdims=True)
         dmean = np.sum(dx_norm * -1 / np.sqrt(self.variance + self.epsilon), axis=-1, keepdims=True) + \
                 dvar * np.sum(-2 * (self.x - self.mean), axis=-1, keepdims=True) / self.input_dim
@@ -60,23 +56,16 @@ class LayerNorm:
         return dx
 
     def update_params(self, lr=0.001, beta_1=0.9, beta_2=0.999, eps=1e-08): 
-        # Уменьшение размерности градиентов
         dW_agg = np.sum(self.dW, axis=0) if self.dW.ndim > 1 else self.dW
         db_agg = np.sum(self.db, axis=0) if self.db.ndim > 1 else self.db
-
-        # Обновление моментов и скоростей
         self.mW = beta_1 * self.mW + (1 - beta_1) * dW_agg
         self.mb = beta_1 * self.mb + (1 - beta_1) * db_agg
         self.vW = beta_2 * self.vW + (1 - beta_2) * (dW_agg ** 2)
         self.vb = beta_2 * self.vb + (1 - beta_2) * (db_agg ** 2)
-
-        # Корректировка моментов с учётом времени
         mW_corr = self.mW / (1 - beta_1**self.t)
         mb_corr = self.mb / (1 - beta_1**self.t)
         vW_corr = self.vW / (1 - beta_2**self.t)
         vb_corr = self.vb / (1 - beta_2**self.t)
-
-        # Обновление параметров
         self.gamma -= lr * mW_corr / (np.sqrt(vW_corr) + eps)
         self.beta -= lr * mb_corr / (np.sqrt(vb_corr) + eps)
         self.t += 1
@@ -203,9 +192,7 @@ class MultiHeadAttention:
         return out
     
     def backward(self, dOut):
-        # Backward через проекционный слой
         dConcat = self.proj.backward(dOut)
-        # Backward через все головы
         dX_heads = []
         split_dOut = np.split(dConcat, len(self.heads), axis=-1)
         for i, head in enumerate(self.heads):
